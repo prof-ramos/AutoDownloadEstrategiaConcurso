@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: 'pt-BR'
+early_access: false
+
+reviews:
+  profile: 'chill'
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - '!**/*.json'
+    - '!**/*.lock'
+    - '!.gitignore'
+  path_instructions:
+    - path: '**/*.py'
+      instructions: |
+        Review the Python code for:
+        - Proper error handling
+        - Security issues (especially with credentials)
+        - Selenium/SeleniumBase best practices
+        - Threading safety
+
+chat:
+  auto_reply: true
