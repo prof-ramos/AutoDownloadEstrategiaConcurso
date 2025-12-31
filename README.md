@@ -1,6 +1,14 @@
 # Auto Download Estratégia Concursos
 
-Ferramenta para baixar automaticamente os materiais dos cursos do Estratégia Concursos.
+Baixador automático de cursos do Estratégia Concursos com anti-detecção e downloads paralelos.
+
+## ✨ Funcionalidades
+
+- 🛡️ **Anti-detecção** — SeleniumBase UC Mode evita bloqueios
+- ⚡ **Downloads paralelos** — Até 3 downloads simultâneos
+- 🔄 **Retry automático** — Backoff exponencial em caso de falha
+- 📊 **Barras de progresso** — tqdm com visual colorido
+- 💾 **Retomada automática** — Salva progresso e continua de onde parou
 
 ## Requisitos
 
@@ -11,44 +19,44 @@ Ferramenta para baixar automaticamente os materiais dos cursos do Estratégia Co
 ## Instalação
 
 ```bash
-# Instalar dependências com uv
 uv sync
 ```
 
 ## Uso
 
 ```bash
-# Executar com uv
+# Executar normalmente
 uv run python main.py
 
 # Especificar diretório de download
 uv run python main.py -d /caminho/para/downloads
 
-# Ajustar tempo de espera para login (padrão: 60 segundos)
+# Ajustar tempo de espera para login (padrão: 60s)
 uv run python main.py -w 120
 
-# Resetar progresso e começar do início
+# Resetar progresso
 uv run python main.py --reset
+
+# Desativar downloads paralelos
+uv run python main.py --no-parallel
 ```
 
 ## Argumentos
 
-| Argumento           | Descrição                             | Padrão                   |
-| ------------------- | ------------------------------------- | ------------------------ |
-| `-d`, `--dir`       | Diretório onde os cursos serão salvos | `~/Downloads/Estrategia` |
-| `-w`, `--wait-time` | Tempo em segundos para login manual   | `60`                     |
-| `-r`, `--reset`     | Ignora o progresso salvo e recomeça   | `false`                  |
-
-## Retomada Automática
-
-O script salva o progresso em `.progress.json` dentro do diretório de download. Se o script for
-interrompido, basta executá-lo novamente e ele continuará de onde parou.
+| Argumento           | Descrição                          | Padrão                   |
+| ------------------- | ---------------------------------- | ------------------------ |
+| `-d`, `--dir`       | Diretório de download              | `~/Downloads/Estrategia` |
+| `-w`, `--wait-time` | Tempo para login manual (segundos) | `60`                     |
+| `-r`, `--reset`     | Ignora progresso e recomeça        | `false`                  |
+| `--headless`        | Executa sem interface gráfica      | `false`                  |
+| `--no-parallel`     | Desativa downloads paralelos       | `false`                  |
 
 ## Como Funciona
 
-1. O script abre o Chrome e navega para a página de login
-2. Você faz o login manualmente no navegador
-3. Após o tempo de espera, o script baixa automaticamente todos os materiais dos seus cursos
+1. O script abre o Chrome (com anti-detecção)
+2. Você faz login manualmente
+3. Após o tempo de espera, baixa automaticamente todos os materiais
+4. Progresso é salvo em `.progress.json`
 
 ## Licença
 
