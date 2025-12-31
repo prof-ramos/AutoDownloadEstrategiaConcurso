@@ -1,0 +1,7 @@
+__pycache__/
+.env
+.progress.json
+client_secret.json
+token.json
+.venv/
+*.pyc

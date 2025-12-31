@@ -12,14 +12,15 @@ import sys
 import json
 from urllib.parse import urljoin
 from functools import wraps
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import threading
-from queue import Queue
 
 import requests
 from seleniumbase import SB
 from tqdm import tqdm
 from colorama import init, Fore, Style
+
+from gdrive import GoogleDriveManager
 
 # Inicializa colorama para Windows
 init(autoreset=True)
@@ -116,35 +117,66 @@ def download_file(url, file_path, current_page_url=None):
 class DownloadManager:
     """Gerenciador de downloads paralelos em background."""
 
-    def __init__(self, max_workers=MAX_PARALLEL_DOWNLOADS):
+    def __init__(self, max_workers=MAX_PARALLEL_DOWNLOADS, drive_manager=None, keep_local=True):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.futures = []
         self.lock = threading.Lock()
         self.completed = 0
         self.failed = 0
         self.total = 0
+        self.drive_manager = drive_manager
+        self.keep_local = keep_local
 
-    def add_download(self, url, file_path, referer=None):
+    def add_download(self, url, file_path, referer=None, drive_folder_id=None):
         """Adiciona um download à fila de background."""
         if os.path.exists(file_path):
-            return  # Já existe, não adiciona
+            # Se o arquivo já existe e o drive_manager está ativo, ainda assim tenta subir se for necessário
+            if self.drive_manager and drive_folder_id:
+                future = self.executor.submit(self._upload_only_task, file_path, drive_folder_id)
+                self.futures.append((future, file_path))
+            return
 
         with self.lock:
             self.total += 1
 
-        future = self.executor.submit(self._download_task, url, file_path, referer)
+        future = self.executor.submit(self._download_task, url, file_path, referer, drive_folder_id)
         self.futures.append((future, file_path))
 
-    def _download_task(self, url, file_path, referer):
-        """Tarefa de download executada em background."""
+    def _download_task(self, url, file_path, referer, drive_folder_id=None):
+        """Tarefa de download executada em background, seguida opcionalmente de upload."""
         try:
             download_file(url, file_path, referer)
+
+            # Se o Drive estiver ativo, faz o upload
+            if self.drive_manager and drive_folder_id:
+                log_info(f"Iniciando upload para o Drive: {os.path.basename(file_path)}")
+                drive_id = self.drive_manager.upload_file(file_path, drive_folder_id)
+
+                if drive_id:
+                    log_success(f"Upload concluído: {os.path.basename(file_path)}")
+                    # Apaga local se não for para manter
+                    if not self.keep_local:
+                        os.remove(file_path)
+                        log_info(f"Arquivo local removido: {os.path.basename(file_path)}")
+                else:
+                    log_error(f"Falha no upload para o Drive: {os.path.basename(file_path)}")
+
             with self.lock:
                 self.completed += 1
             return True
-        except Exception as e:
+        except Exception:
             with self.lock:
                 self.failed += 1
+            return False
+
+    def _upload_only_task(self, file_path, drive_folder_id):
+        """Apenas sobe o arquivo se ele já existia localmente."""
+        try:
+            drive_id = self.drive_manager.upload_file(file_path, drive_folder_id)
+            if drive_id and not self.keep_local:
+                os.remove(file_path)
+            return True
+        except Exception:
             return False
 
     def wait_all(self):
@@ -157,7 +189,7 @@ class DownloadManager:
         for future, file_path in self.futures:
             try:
                 future.result(timeout=300)  # 5 min timeout por arquivo
-            except Exception as e:
+            except Exception:
                 log_error(f"Erro em download: {os.path.basename(file_path)}")
 
         with self.lock:
@@ -253,7 +285,7 @@ def get_lesson_data(sb, course_url):
         return []
 
 
-def download_lesson_materials(sb, lesson_info, course_title, download_dir, download_manager=None):
+def download_lesson_materials(sb, lesson_info, course_title, download_dir, download_manager=None, drive_course_id=None):
     """Navega para uma aula e baixa os materiais (com suporte a downloads em background)."""
     lesson_title = lesson_info['title']
     lesson_subtitle = lesson_info['subtitle']
@@ -280,12 +312,20 @@ def download_lesson_materials(sb, lesson_info, course_title, download_dir, downl
         log_error(f"Erro ao criar diretório: {e}")
         return
 
+    # Gerencia pasta no Drive
+    drive_lesson_id = None
+    if download_manager and download_manager.drive_manager and drive_course_id:
+        try:
+            drive_lesson_id = download_manager.drive_manager.get_or_create_folder(sanitized_lesson_title, drive_course_id)
+        except Exception as e:
+            log_error(f"Erro ao criar pasta no Drive: {e}")
+
     current_url = sb.get_current_url()
 
     # Função helper para adicionar downloads
     def queue_download(url, file_path):
         if download_manager:
-            download_manager.add_download(url, file_path, current_url)
+            download_manager.add_download(url, file_path, current_url, drive_lesson_id)
         elif not os.path.exists(file_path):
             try:
                 download_file(url, file_path, current_url)
@@ -464,7 +504,7 @@ def mark_lesson_completed(completed_lessons, course_title, lesson_title):
 
 
 # --- Fluxo Principal ---
-def run_downloader(download_dir, login_wait_time, reset_progress=False, headless=False, parallel=True):
+def run_downloader(download_dir, login_wait_time, reset_progress=False, headless=False, parallel=True, use_drive=False, keep_local=True):
     try:
         os.makedirs(download_dir, exist_ok=True)
         log_success(f"Diretório: {os.path.abspath(download_dir)}")
@@ -482,8 +522,21 @@ def run_downloader(download_dir, login_wait_time, reset_progress=False, headless
     start_lesson = progress.get("lesson_index", 0)
     completed_lessons = progress.get("completed_lessons", [])
 
+    # Inicializa Google Drive se solicitado
+    drive_manager = None
+    drive_root_id = None
+    if use_drive:
+        log_info("Inicializando Google Drive...")
+        try:
+            drive_manager = GoogleDriveManager()
+            drive_root_id = drive_manager.get_or_create_folder("Estrategia_Concursos")
+            log_success("Google Drive conectado!")
+        except Exception as e:
+            log_error(f"Falha ao conectar com Google Drive: {e}")
+            sys.exit(1)
+
     # Cria gerenciador de downloads paralelos
-    download_manager = DownloadManager() if parallel else None
+    download_manager = DownloadManager(drive_manager=drive_manager, keep_local=keep_local) if parallel else None
     if parallel:
         log_info(f"Downloads paralelos ativados ({MAX_PARALLEL_DOWNLOADS} simultâneos)")
 
@@ -501,6 +554,12 @@ def run_downloader(download_dir, login_wait_time, reset_progress=False, headless
                     continue
 
                 log_header(f"[{i + 1}/{len(courses)}] {course['title']}")
+
+                # Gerencia pasta do curso no Drive
+                drive_course_id = None
+                if drive_manager:
+                    drive_course_id = drive_manager.get_or_create_folder(sanitize_filename(course['title']), drive_root_id)
+
                 lessons = get_lesson_data(sb, course['url'])
 
                 if not lessons:
@@ -515,7 +574,7 @@ def run_downloader(download_dir, login_wait_time, reset_progress=False, headless
                         continue
 
                     log_info(f"[{j + 1}/{len(lessons)}] {lesson_info['title']}")
-                    download_lesson_materials(sb, lesson_info, course['title'], download_dir, download_manager)
+                    download_lesson_materials(sb, lesson_info, course['title'], download_dir, download_manager, drive_course_id)
 
                     mark_lesson_completed(completed_lessons, course['title'], lesson_info['title'])
                     save_progress(download_dir, i, j + 1, completed_lessons)
@@ -585,8 +644,29 @@ def main():
         help="Desativa downloads paralelos (sequencial)"
     )
 
+    parser.add_argument(
+        "--drive",
+        action="store_true",
+        help="Envia arquivos para o Google Drive automaticamente"
+    )
+
+    parser.add_argument(
+        "--keep-local",
+        action="store_true",
+        default=False,
+        help="Mantém o arquivo local após o upload para o Drive (padrão: deleta)"
+    )
+
     args = parser.parse_args()
-    run_downloader(args.download_dir, args.wait_time, args.reset, args.headless, not args.no_parallel)
+    run_downloader(
+        args.download_dir,
+        args.wait_time,
+        args.reset,
+        args.headless,
+        not args.no_parallel,
+        args.drive,
+        args.keep_local
+    )
 
 
 if __name__ == "__main__":
