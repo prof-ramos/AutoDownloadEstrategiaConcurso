@@ -389,7 +389,7 @@ def run_downloader(download_dir, login_wait_time):
         print(f"ERRO: Não foi possível criar o diretório de download '{download_dir}'. Erro: {e}")
         sys.exit(1)  # Encerra o script se não puder criar o diretório
 
-    driver = webdriver.Edge()
+    driver = webdriver.Chrome()
     driver.maximize_window()
 
     try:
@@ -435,8 +435,8 @@ def main():
         dest='download_dir',                # 'dest' diz ao argparse para salvar o valor em 'args.download_dir'
         metavar='PATH',                     # 'metavar' é o nome que aparece na mensagem de ajuda
         type=str,
-        default="E:/Estrategia",            # O valor padrão se o argumento não for fornecido
-        help="O caminho completo para a pasta onde os cursos serão salvos.\n(Padrão: E:/Estrategia)"
+        default=os.path.expanduser("~/Downloads/Estrategia"),  # O valor padrão se o argumento não for fornecido
+        help="O caminho completo para a pasta onde os cursos serão salvos.\n(Padrão: ~/Downloads/Estrategia)"
     )
 
     parser.add_argument(

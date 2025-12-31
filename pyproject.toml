@@ -1,0 +1,13 @@
+[project]
+name = "auto-download-estrategia-concurso"
+version = "1.0.0"
+description = "Baixador automático de cursos do Estratégia Concursos"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "selenium>=4.0.0",
+    "requests>=2.28.0",
+]
+
+[project.scripts]
+download-estrategia = "main:main"
