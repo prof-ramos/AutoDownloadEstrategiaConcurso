@@ -3,6 +3,7 @@ import re
 import time
 import argparse
 import sys
+import json
 from urllib.parse import urljoin
 
 import requests
@@ -376,8 +377,56 @@ def login(driver, wait_time):
     print("Pausa para login concluída. Continuando o script...")
 
 
+# --- Sistema de Progresso ---
+def get_progress_file_path(download_dir):
+    """Retorna o caminho do arquivo de progresso."""
+    return os.path.join(download_dir, ".progress.json")
+
+
+def load_progress(download_dir):
+    """Carrega o progresso salvo do arquivo JSON."""
+    progress_file = get_progress_file_path(download_dir)
+    if os.path.exists(progress_file):
+        try:
+            with open(progress_file, 'r', encoding='utf-8') as f:
+                progress = json.load(f)
+                print(f"Progresso carregado: Curso {progress.get('course_index', 0) + 1}, Aula {progress.get('lesson_index', 0) + 1}")
+                return progress
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Aviso: Não foi possível carregar o progresso: {e}")
+    return {"course_index": 0, "lesson_index": 0, "completed_lessons": []}
+
+
+def save_progress(download_dir, course_index, lesson_index, completed_lessons):
+    """Salva o progresso atual no arquivo JSON."""
+    progress_file = get_progress_file_path(download_dir)
+    progress = {
+        "course_index": course_index,
+        "lesson_index": lesson_index,
+        "completed_lessons": completed_lessons
+    }
+    try:
+        with open(progress_file, 'w', encoding='utf-8') as f:
+            json.dump(progress, f, ensure_ascii=False, indent=2)
+    except IOError as e:
+        print(f"Aviso: Não foi possível salvar o progresso: {e}")
+
+
+def is_lesson_completed(completed_lessons, course_title, lesson_title):
+    """Verifica se uma aula já foi completada."""
+    lesson_key = f"{course_title}::{lesson_title}"
+    return lesson_key in completed_lessons
+
+
+def mark_lesson_completed(completed_lessons, course_title, lesson_title):
+    """Marca uma aula como completada."""
+    lesson_key = f"{course_title}::{lesson_title}"
+    if lesson_key not in completed_lessons:
+        completed_lessons.append(lesson_key)
+
+
 # --- Fluxo Principal ---
-def run_downloader(download_dir, login_wait_time):
+def run_downloader(download_dir, login_wait_time, reset_progress=False):
     """
     Função principal que orquestra todo o processo de download.
     """
@@ -388,6 +437,17 @@ def run_downloader(download_dir, login_wait_time):
     except OSError as e:
         print(f"ERRO: Não foi possível criar o diretório de download '{download_dir}'. Erro: {e}")
         sys.exit(1)  # Encerra o script se não puder criar o diretório
+
+    # Carrega ou reseta o progresso
+    if reset_progress:
+        progress = {"course_index": 0, "lesson_index": 0, "completed_lessons": []}
+        print("Progresso resetado. Iniciando do começo.")
+    else:
+        progress = load_progress(download_dir)
+
+    start_course = progress.get("course_index", 0)
+    start_lesson = progress.get("lesson_index", 0)
+    completed_lessons = progress.get("completed_lessons", [])
 
     driver = webdriver.Chrome()
     driver.maximize_window()
@@ -401,6 +461,11 @@ def run_downloader(download_dir, login_wait_time):
             return
 
         for i, course in enumerate(courses):
+            # Pula cursos já processados
+            if i < start_course:
+                print(f"\n[{i + 1}/{len(courses)}] Pulando curso já processado: {course['title']}")
+                continue
+
             print(f"\n[{i + 1}/{len(courses)}] Processando curso: {course['title']}")
             lessons = get_lesson_data(driver, course['url'])
 
@@ -409,12 +474,30 @@ def run_downloader(download_dir, login_wait_time):
                 continue
 
             for j, lesson_info in enumerate(lessons):
+                # Pula aulas já processadas no curso atual (apenas na retomada)
+                if i == start_course and j < start_lesson:
+                    print(f"\n    -> Pulando aula já processada: {lesson_info['title']}")
+                    continue
+
+                # Verifica se a aula já foi completada em execuções anteriores
+                if is_lesson_completed(completed_lessons, course['title'], lesson_info['title']):
+                    print(f"\n    -> Aula já completada anteriormente: {lesson_info['title']}")
+                    continue
+
                 print(f"\n    -> Processando aula {j + 1}/{len(lessons)}: {lesson_info['title']}")
                 download_lesson_materials(driver, lesson_info, course['title'], download_dir)
+
+                # Marca como completada e salva progresso
+                mark_lesson_completed(completed_lessons, course['title'], lesson_info['title'])
+                save_progress(download_dir, i, j + 1, completed_lessons)
                 time.sleep(2)
+
+            # Reseta o índice de aula para o próximo curso
+            start_lesson = 0
 
     except Exception as e:
         print(f"\nOcorreu um erro geral no script: {e}")
+        print("O progresso foi salvo. Execute novamente para retomar.")
     finally:
         print("\nProcesso concluído. Fechando o navegador em 10 segundos.")
         time.sleep(10)
@@ -446,9 +529,15 @@ def main():
         help="Tempo em segundos para aguardar o login manual (padrão: 60)."
     )
 
+    parser.add_argument(
+        "-r", "--reset",
+        action="store_true",
+        help="Ignora o progresso salvo e começa do início."
+    )
+
     args = parser.parse_args()
 
-    run_downloader(args.download_dir, args.wait_time)
+    run_downloader(args.download_dir, args.wait_time, args.reset)
 
 
 if __name__ == "__main__":
